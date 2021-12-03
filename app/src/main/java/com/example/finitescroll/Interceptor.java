@@ -17,6 +17,8 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
 
     private transient Context context;
     private boolean ready;
+    private DatagramChannel tunnel;
+    ParcelFileDescriptor localTunnel;
 
     public Interceptor(Context context) {
         this.context = context;
@@ -49,14 +51,14 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
                 }
             }
 
-            DatagramChannel tunnel = DatagramChannel.open();
+            tunnel = DatagramChannel.open();
 
             this.protect(tunnel.socket());
 
             tunnel.connect(serverAddress);
             Builder builder = new Builder();
 
-            ParcelFileDescriptor localTunnel = builder
+            localTunnel = builder
                     .addAddress(Connections.LOCAL_ADDRESS, 24)
                     .addRoute("0.0.0.0", 0)
                     .establish();
@@ -69,7 +71,24 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
 
     }
 
+    /*
+     * Stops the VPN and all underlying services
+     * returns true if successful, false otherwise
+     * Synchronized, in order to make callee wait
+     */
+    public synchronized boolean stopServices() {
+        try {
+            tunnel.close();
+            localTunnel.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+            return false;
+        }
+        return true;
+    }
+
     public boolean isReady() {
         return this.ready;
     }
+
 }

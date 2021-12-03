@@ -18,10 +18,44 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Start up all connection
+        // Let's get this bad boy rolling
+        startService();
+    }
+
+    private void startService() {
+        // Start up all connections
         connections = new Connections(this);
         connectionsThread = new Thread(connections);
         connectionsThread.start();
+    }
+
+    private boolean stopService() {
+
+        boolean success = true;
+
+        synchronized (connections) {
+            try {
+                // Request connections thread to stop it's services
+                success = connections.stopServices() && success;
+
+                // Terminate connections thread
+                connectionsThread.join();
+
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                success = false;
+            }
+        }
+
+        return success;
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (!stopService()) {
+            System.err.println("Error while stopping services");
+        }
     }
 
     @Override
