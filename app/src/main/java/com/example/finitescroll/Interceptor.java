@@ -4,17 +4,19 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.channels.DatagramChannel;
 
-public class Interceptor extends android.net.VpnService implements Runnable {
+public class Interceptor extends android.net.VpnService implements Runnable, Serializable {
 
-    Context context;
-    boolean ready;
+    private transient Context context;
+    private boolean ready;
 
     public Interceptor(Context context) {
         this.context = context;
@@ -32,9 +34,19 @@ public class Interceptor extends android.net.VpnService implements Runnable {
         try {
             Intent intent = VpnService.prepare(this.context);
 
-            // First time setting up VPN on device
-            if (intent != null) {
-                ((Activity)this.context).startActivityForResult(intent, 0);
+            // Permission for VPN hasn't been granted yet
+            while (intent != null) {
+                synchronized (this) {
+
+                    // Start permission request activity
+                    ((Activity) this.context).startActivityForResult(intent, MainActivity.VPN_REQUEST_RESULT);
+
+                    // Wait until accepted
+                    this.wait();
+
+                    intent = VpnService.prepare(this.context);
+
+                }
             }
 
             DatagramChannel tunnel = DatagramChannel.open();
@@ -51,7 +63,7 @@ public class Interceptor extends android.net.VpnService implements Runnable {
 
             this.ready = true;
 
-        } catch (IOException e) {
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
 
