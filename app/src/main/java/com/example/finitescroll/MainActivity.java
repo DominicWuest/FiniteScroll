@@ -2,9 +2,12 @@ package com.example.finitescroll;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.widget.CompoundButton;
+import android.widget.Switch;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -13,13 +16,28 @@ public class MainActivity extends AppCompatActivity {
     private Connections connections;
     private Thread connectionsThread;
 
+    boolean running;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Let's get this bad boy rolling
-        startService();
+        SwitchCompat serviceStatusSwitch = findViewById(R.id.serviceStatusSwitch);
+
+        running = false;
+
+        serviceStatusSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                // Let's get this bad boy rolling
+                if (isChecked)
+                    startService();
+                else
+                    stopService();
+            }
+        });
+
     }
 
     private void startService() {
@@ -27,6 +45,8 @@ public class MainActivity extends AppCompatActivity {
         connections = new Connections(this);
         connectionsThread = new Thread(connections);
         connectionsThread.start();
+
+        running = true;
     }
 
     private boolean stopService() {
@@ -47,13 +67,16 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        running = false;
+
         return success;
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (!stopService()) {
+
+        if (running && !stopService()) {
             System.err.println("Error while stopping services");
         }
     }

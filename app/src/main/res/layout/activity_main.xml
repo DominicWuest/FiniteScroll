@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     tools:context=".MainActivity">
@@ -14,14 +13,14 @@
         android:layout_marginStart="176dp"
         android:layout_marginTop="108dp"
         android:layout_marginEnd="177dp"
-        android:text="Start App"
+        android:text="@string/launch_message_off"
         android:textSize="24sp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/editTextTime" />
 
-    <Switch
-        android:id="@+id/switch3"
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/serviceStatusSwitch"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="166dp"
@@ -29,11 +28,11 @@
         android:layout_marginEnd="166dp"
         android:scaleX="2"
         android:scaleY="2"
-        android:switchMinWidth="60dp"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.526"
+        app:layout_constraintHorizontal_bias=".5"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/launchMessage" />
+        app:layout_constraintTop_toBottomOf="@+id/launchMessage"
+        app:switchMinWidth="60dp" />
 
     <TextView
         android:id="@+id/editTextTime"
@@ -59,7 +58,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/switch3"
+        app:layout_constraintTop_toBottomOf="@+id/serviceStatusSwitch"
         app:layout_constraintVertical_bias="1.0">
 
         <TextView

@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">FiniteScroll</string>
+    <string name="launch_message_off">Start Service</string>
+    <string name="launch_message_on">Start Service</string>
 </resources>
