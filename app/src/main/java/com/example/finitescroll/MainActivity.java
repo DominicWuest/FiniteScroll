@@ -9,7 +9,7 @@ import android.os.Bundle;
 
 public class MainActivity extends AppCompatActivity {
 
-    public static final int VPN_REQUEST_RESULT = 69;
+    public static final int VPN_REQUEST_RESULT = 42;
 
     public static final String LOCAL_ADDRESS  = "10.0.2.0";
     public static final int    LOCAL_VPN_PORT = 1337;
@@ -54,17 +54,11 @@ public class MainActivity extends AppCompatActivity {
 
         // Shut down interceptor
         synchronized (interceptor) {
-            try {
-                // Request interceptor to stop it's services
-                success = interceptor.stopServices();
+            // Request interceptor to stop it's services
+            success = interceptor.stopServices();
 
-                // Terminate connections thread
-                interceptorThread.join();
-
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                success = false;
-            }
+            interceptor = null;
+            interceptorThread = null;
         }
 
         running = false;
