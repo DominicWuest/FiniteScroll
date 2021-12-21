@@ -80,13 +80,13 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
 
         switch (requestCode) {
-            case VPN_REQUEST_RESULT: // Returned from VPN permission request
 
+            case VPN_REQUEST_RESULT: // Returned from VPN permission request
                 synchronized (interceptor) {
                     interceptor.notify();
                 }
-
                 break;
+
         }
     }
 
