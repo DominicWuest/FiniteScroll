@@ -6,15 +6,16 @@ import androidx.appcompat.widget.SwitchCompat;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.widget.CompoundButton;
-import android.widget.Switch;
 
 public class MainActivity extends AppCompatActivity {
 
     public static final int VPN_REQUEST_RESULT = 69;
 
-    private Connections connections;
-    private Thread connectionsThread;
+    public static final String LOCAL_ADDRESS  = "10.0.2.0";
+    public static final int    LOCAL_VPN_PORT = 1337;
+
+    private Interceptor interceptor;
+    private Thread interceptorThread;
 
     boolean running;
 
@@ -27,24 +28,22 @@ public class MainActivity extends AppCompatActivity {
 
         running = false;
 
-        serviceStatusSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                // Let's get this bad boy rolling
-                if (isChecked)
-                    startService();
-                else
-                    stopService();
-            }
+        serviceStatusSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            // Let's get this bad boy rolling
+            if (isChecked)
+                startService();
+            else
+                stopService();
         });
 
     }
 
     private void startService() {
-        // Start up all connections
-        connections = new Connections(this);
-        connectionsThread = new Thread(connections);
-        connectionsThread.start();
+
+        // Start the interceptor (Pseudo VPN)
+        interceptor = new Interceptor(this);
+        interceptorThread = new Thread(interceptor);
+        interceptorThread.start();
 
         running = true;
     }
@@ -53,13 +52,14 @@ public class MainActivity extends AppCompatActivity {
 
         boolean success = true;
 
-        synchronized (connections) {
+        // Shut down interceptor
+        synchronized (interceptor) {
             try {
-                // Request connections thread to stop it's services
-                success = connections.stopServices() && success;
+                // Request interceptor to stop it's services
+                success = interceptor.stopServices();
 
                 // Terminate connections thread
-                connectionsThread.join();
+                interceptorThread.join();
 
             } catch (InterruptedException e) {
                 e.printStackTrace();
@@ -87,8 +87,6 @@ public class MainActivity extends AppCompatActivity {
 
         switch (requestCode) {
             case VPN_REQUEST_RESULT: // Returned from VPN permission request
-
-                Interceptor interceptor = connections.getInterceptor();
 
                 synchronized (interceptor) {
                     interceptor.notify();

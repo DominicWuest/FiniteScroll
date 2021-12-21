@@ -4,25 +4,21 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
-import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.channels.DatagramChannel;
 
-public class Interceptor extends android.net.VpnService implements Runnable, Serializable {
+public class Interceptor extends android.net.VpnService implements Runnable {
 
     private transient Context context;
-    private boolean ready;
     private DatagramChannel tunnel;
     ParcelFileDescriptor localTunnel;
 
     public Interceptor(Context context) {
         this.context = context;
-        this.ready = false;
     }
 
     // Need empty constructor for VPN services
@@ -31,7 +27,7 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
     @Override
     public void run() {
 
-        final SocketAddress serverAddress = new InetSocketAddress(Connections.LOCAL_ADDRESS, Connections.LOCAL_VPN_PORT);
+        final SocketAddress serverAddress = new InetSocketAddress(MainActivity.LOCAL_ADDRESS, MainActivity.LOCAL_VPN_PORT);
 
         try {
             Intent intent = VpnService.prepare(this.context);
@@ -41,12 +37,12 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
                 synchronized (this) {
 
                     // Start permission request activity
-                    ((Activity) this.context).startActivityForResult(intent, MainActivity.VPN_REQUEST_RESULT);
+                    ((Activity) context).startActivityForResult(intent, MainActivity.VPN_REQUEST_RESULT);
 
-                    // Wait until accepted
+                    // Wait until responded
                     this.wait();
 
-                    intent = VpnService.prepare(this.context);
+                    intent = VpnService.prepare(context);
 
                 }
             }
@@ -59,11 +55,9 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
             Builder builder = new Builder();
 
             localTunnel = builder
-                    .addAddress(Connections.LOCAL_ADDRESS, 24)
+                    .addAddress(MainActivity.LOCAL_ADDRESS, 24)
                     .addRoute("0.0.0.0", 0)
                     .establish();
-
-            this.ready = true;
 
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
@@ -85,10 +79,6 @@ public class Interceptor extends android.net.VpnService implements Runnable, Ser
             return false;
         }
         return true;
-    }
-
-    public boolean isReady() {
-        return this.ready;
     }
 
 }
