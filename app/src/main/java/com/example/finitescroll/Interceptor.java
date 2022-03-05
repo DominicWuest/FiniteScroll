@@ -103,7 +103,7 @@ public class Interceptor extends android.net.VpnService implements Runnable {
 				} else {
 
 					if ((packet.get(33) & 0x2) != 0) { // If SYN bit is set -> new connection
-						ProxySocket newSock = new ProxySocket(packetArr);
+						ProxySocket newSock = new ProxySocket(packetArr, out);
 
 						socks.put(srcPort, newSock);
 
