@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Random;
 
 public class Interceptor extends android.net.VpnService implements Runnable {
 
@@ -29,11 +30,15 @@ public class Interceptor extends android.net.VpnService implements Runnable {
 
 	private HashMap<Integer, ProxySocket> socks;
 
+	public static Random random;
+
 	Interceptor(Context context) {
 		this.context = context;
 		this.isRunning = false;
 
 		this.socks = new HashMap<>();
+
+		random = new Random();
 	}
 
 	// Need empty constructor for VPN services
