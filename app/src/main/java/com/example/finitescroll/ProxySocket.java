@@ -1,5 +1,6 @@
 package com.example.finitescroll;
 
+import java.io.DataInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -47,19 +48,19 @@ public class ProxySocket implements Runnable {
 	@Override
 	public void run() {
 
-		try {
-			byte[] packet;
+		byte[] packet;
 
-			while (this.isRunning) {
+		while (this.isRunning) {
+
+			try {
 				packet = sharedBuffer.take();
 
 				if (packet.length != 0) { // As length is zero if proxy is getting shut down
 					proxyPacket(packet);
 				}
+			} catch (InterruptedException | IOException e) {
+				e.printStackTrace();
 			}
-
-		} catch (InterruptedException | IOException e) {
-			e.printStackTrace();
 		}
 
 	}
@@ -138,7 +139,7 @@ public class ProxySocket implements Runnable {
 
 			byte flags = (byte) (packet[dgHeaderLength + 13] & 0xF); // TCP flags
 
-			if ((flags & 0b10) != 0) { // SYN packet
+			if ((flags & 0x02) != 0) { // SYN packet
 				respondToSyn(packet);
 			} else if ((flags & 0b1) != 0) { // FIN packet
 				// TODO: respond with ACK - FIN
@@ -151,15 +152,30 @@ public class ProxySocket implements Runnable {
 		// Extract the message from the packet
 		byte[] message = Arrays.copyOfRange(packet, dgHeaderLength + segHeaderLength, packet.length);
 
-		sock.getOutputStream().write(message); // Send segment to remote host
+		sock.getOutputStream().write(message); // Send message to remote host
 
 		byte[] response = new byte[Interceptor.MAX_PACKET_SIZE];
-		int bytes;
 
-		while ((bytes = sock.getInputStream().read(response)) != -1) { // Receive response from remote host as long as we haven't reached EOF
-			System.out.println("Response: " + byteArrToHexString(Arrays.copyOf(response, bytes)));
-			// TODO: send message to local client
-		}
+		ByteBuffer packetWrapper = ByteBuffer.wrap(packet);
+
+		int seqNum = packetWrapper.getInt(24) + message.length;
+		int ackNum = packetWrapper.getInt(28);
+
+		short identification = (short) Interceptor.random.nextInt();
+
+		System.out.println(Thread.currentThread().getId() + " " + identification + ": " + byteArrToHexString(packet));
+
+
+		int bytes = sock.getInputStream().read(response);
+
+		// Problem with large packets, client hello -> server hello (large) -> client hello again -> fatal error unexpected message
+
+		byte[] reply = createDatagram(identification, ackNum, seqNum, (byte) 0x18, Arrays.copyOfRange(response, 0, bytes));
+
+		System.out.println(Thread.currentThread().getId() + " " + bytes + " " + identification + " " + sock.getInputStream().available() + " " + byteArrToHexString(reply));
+
+		// Send packet to local client with PSH and ACK set
+		out.write(reply, 0, reply.length);
 
 	}
 
@@ -169,7 +185,7 @@ public class ProxySocket implements Runnable {
 	private void respondToSyn(byte[] packet) throws IOException {
 
 		// Get TCP segment
-		int seqNum = ByteBuffer.wrap(packet, 24, 4).getInt(); // Their sequence number
+		int seqNum = ByteBuffer.wrap(packet).getInt(24); // Their sequence number
 
 		byte[] datagram = createDatagram((short) Interceptor.random.nextInt(), Interceptor.random.nextInt(), seqNum + 1, (byte) 0x12, defaultOptions, new byte[0]);
 
@@ -192,6 +208,7 @@ public class ProxySocket implements Runnable {
 
 		// Combine the datagram header and segment
 		ByteBuffer datagram = ByteBuffer.allocate(datagramHeader.length + segment.length);
+		System.out.println(datagramHeader.length + segment.length);
 		datagram.put(datagramHeader).put(segment);
 
 		return datagram.array();
