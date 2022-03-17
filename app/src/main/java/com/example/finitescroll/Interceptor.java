@@ -17,6 +17,7 @@ import java.nio.channels.DatagramChannel;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 public class Interceptor extends android.net.VpnService implements Runnable {
 
@@ -104,19 +105,19 @@ public class Interceptor extends android.net.VpnService implements Runnable {
 				byte[] packetArr = Arrays.copyOf(packet.array(), packetLen);
 
 				if (socks.containsKey(srcPort)) { // Already have an existing socket for this port
-					socks.get(srcPort).sharedBuffer.put(packetArr);
+					socks.get(srcPort).sharedBuffer.offer(packetArr, 100, TimeUnit.MILLISECONDS);
 				} else {
 
 					if ((packet.get(33) & 0x2) != 0) { // If SYN bit is set -> new connection
-						ProxySocket newSock = new ProxySocket(packetArr, out);
+						ProxySocket newSock = new ProxySocket(packetArr, out, this);
 
 						socks.put(srcPort, newSock);
 
 						// Start new thread for this proxy and put the packet into the shared buffer
 						new Thread(newSock, String.valueOf(srcPort)).start();
-						newSock.sharedBuffer.put(packetArr);
+						newSock.sharedBuffer.offer(packetArr, 100, TimeUnit.MILLISECONDS);
 					} else {
-						System.out.println("Received packet that cannot be associated to previous connection");
+						System.out.println("Received packet that cannot be associated to previous connection " + ProxySocket.byteArrToHexString(packetArr));
 					}
 
 				}
@@ -129,6 +130,12 @@ public class Interceptor extends android.net.VpnService implements Runnable {
 			e.printStackTrace();
 		}
 
+	}
+
+	public void shutdownProxy(ProxySocket sock, int srcPort) {
+		sock.stopServices();
+
+		socks.remove(srcPort);
 	}
 
 	/*

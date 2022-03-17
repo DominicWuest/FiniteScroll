@@ -3,23 +3,34 @@ package com.example.finitescroll;
 import java.io.DataInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.concurrent.SynchronousQueue;
 
 public class ProxySocket implements Runnable {
 
 	SynchronousQueue<byte[]> sharedBuffer;
 
+	Interceptor interceptor; // The interceptor which invoked the constructor
+
 	private final FileOutputStream out; // This is where the outgoing packets are written to
 
 	private Socket sock; // Remote connection
+	private InputStream sockIn;
+	private OutputStream sockOut;
 
 	private int remoteIp, localIp;
 	private int remotePort, localPort;
+
+	private int MSS;
+
+	private HashMap<Integer, byte[]> cachedRequests;
 
 	private boolean isRunning;
 
@@ -30,15 +41,23 @@ public class ProxySocket implements Runnable {
 
 	// Default TCP options sent in response to SYN packets
 	private static final byte[] defaultOptions = new byte[] {
-													0x02, 0x04, 0x05, (byte) 0xB4,  // Maximum segment size options
-													0x01, 0x03, 0x03, 0x06 			// Window options
+													0x02, 0x04, (byte) 0x7F, (byte) 0xFF,  	// Maximum segment size options
+													0x01, 0x03, 0x03, 0x06 					// Window options
 												};
 
-	ProxySocket(byte[] firstPacket, FileOutputStream out) {
+	ProxySocket(byte[] firstPacket, FileOutputStream out, Interceptor interceptor) {
 		this.sharedBuffer = new SynchronousQueue<>();
 		this.out = out;
 
+		this.interceptor = interceptor;
+
 		extractHeaderInfo(firstPacket);
+
+		this.cachedRequests = new HashMap<>();
+
+		this.sock = new Socket();
+
+		interceptor.protect(this.sock);
 
 		initialiseRemoteConnection();
 
@@ -78,6 +97,8 @@ public class ProxySocket implements Runnable {
 		this.localPort = wrapper.getShort(20) & 0xFFFF; // Masking because java
 		this.remotePort = wrapper.getShort(22) & 0xFFFF;
 
+		this.MSS = wrapper.getShort(42); // TODO: Offset should not be static
+
 		// Calculate TCP pseudo header checksum excluding segment length
 		this.pseudoHeaderChecksum = 6; // Protocol
 
@@ -112,17 +133,17 @@ public class ProxySocket implements Runnable {
 				.putShort((short) 0x0000) 	 					 // Checksum
 				.putShort((short) 0x0000); 	 					 // Urgent pointer
 		this.tcpHeaderTemplate = tcpHeader.array();
-
 	}
 
 	// Initialises the socket between the local client and the remote host
 	private void initialiseRemoteConnection() {
-		this.sock = new Socket();
-
 		try {
 			byte[] ipAddr = ByteBuffer.allocate(4).putInt(remoteIp).array(); // Convert int remoteIp to byte arr
 
 			this.sock.connect(new InetSocketAddress(InetAddress.getByAddress(ipAddr), remotePort));
+
+			this.sockIn = this.sock.getInputStream();
+			this.sockOut = this.sock.getOutputStream();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -134,49 +155,84 @@ public class ProxySocket implements Runnable {
 		int dgHeaderLength = 4 * (packet[0] & 0xF); // Datagram header length
 		int segHeaderLength = 4 * ((packet[dgHeaderLength + 12] >> 4) & 0xF); // Segment header length
 
+		ByteBuffer packetWrapper = ByteBuffer.wrap(packet);
+
+		int seqNum = packetWrapper.getInt(24);
+		int ackNum = packetWrapper.getInt(28);
+
+		// Extract the message from the packet
+		byte[] message = Arrays.copyOfRange(packet, dgHeaderLength + segHeaderLength, packet.length);
+
+		seqNum += message.length;
+
 		// No message, might have to react to certain flags
-		if (dgHeaderLength + segHeaderLength == packet.length) {
+		if (message.length == 0) {
+
+			System.out.println(Thread.currentThread().getId() + ": received packet with no message: " + byteArrToHexString(packet));
 
 			byte flags = (byte) (packet[dgHeaderLength + 13] & 0xF); // TCP flags
 
 			if ((flags & 0x02) != 0) { // SYN packet
 				respondToSyn(packet);
 			} else if ((flags & 0b1) != 0) { // FIN packet
-				// TODO: respond with ACK - FIN
+				System.out.println("Fin packet " + Thread.currentThread().getId() + ": " + byteArrToHexString(packet));
+				closeConnection(ackNum, seqNum + 1);
 			}
 			// TODO: Might have to handle other cases later
 
 			return;
 		}
 
-		// Extract the message from the packet
-		byte[] message = Arrays.copyOfRange(packet, dgHeaderLength + segHeaderLength, packet.length);
+		if (cachedRequests.containsKey(ackNum)) { // Resending cached reply
 
-		sock.getOutputStream().write(message); // Send message to remote host
+			byte[] segment = cachedRequests.get(ackNum);
+
+			short identification = (short) Interceptor.random.nextInt();
+
+			System.out.println(Thread.currentThread().getId() + ": Resending " + byteArrToHexString(segment));
+
+			// Send packet to local client with PSH and ACK set
+			synchronized (out) {
+				out.write(createDatagram(segment, identification, false, false, 0));
+			}
+
+			return;
+		}
+
+		sockOut.write(message); // Send message to remote host
 
 		byte[] response = new byte[Interceptor.MAX_PACKET_SIZE];
+		ByteBuffer responseBuf = ByteBuffer.wrap(response);
 
-		ByteBuffer packetWrapper = ByteBuffer.wrap(packet);
+		int bytes = 0;
 
-		int seqNum = packetWrapper.getInt(24) + message.length;
-		int ackNum = packetWrapper.getInt(28);
+		do {
+			byte[] tempBuf = new byte[Interceptor.MAX_PACKET_SIZE];
+			int bufLen = sockIn.read(tempBuf);
 
-		short identification = (short) Interceptor.random.nextInt();
+			if (bufLen < 0)
+				break;
 
-		System.out.println(Thread.currentThread().getId() + " " + identification + ": " + byteArrToHexString(packet));
+			responseBuf.put(tempBuf, 0, bufLen);
 
+			bytes += bufLen;
 
-		int bytes = sock.getInputStream().read(response);
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 
-		// Problem with large packets, client hello -> server hello (large) -> client hello again -> fatal error unexpected message
+		} while (sockIn.available() > 0);
 
-		byte[] reply = createDatagram(identification, ackNum, seqNum, (byte) 0x18, Arrays.copyOfRange(response, 0, bytes));
+		System.out.println(Thread.currentThread().getId() + ": " + byteArrToHexString(packet) + "\nProduced response: " + byteArrToHexString(response));
 
-		System.out.println(Thread.currentThread().getId() + " " + bytes + " " + identification + " " + sock.getInputStream().available() + " " + byteArrToHexString(reply));
+		if (bytes <= 0) {
+			System.out.println(Thread.currentThread().getId() + ": Received invalid length of response: " + byteArrToHexString(packet));
+			return;
+		}
 
-		// Send packet to local client with PSH and ACK set
-		out.write(reply, 0, reply.length);
-
+		segmentAndSend(ackNum, seqNum, Arrays.copyOfRange(response, 0, bytes));
 	}
 
 	/*
@@ -190,7 +246,67 @@ public class ProxySocket implements Runnable {
 		byte[] datagram = createDatagram((short) Interceptor.random.nextInt(), Interceptor.random.nextInt(), seqNum + 1, (byte) 0x12, defaultOptions, new byte[0]);
 
 		// Write reply to local buffer
-		out.write(datagram);
+		synchronized (out) {
+			out.write(datagram);
+		}
+
+	}
+
+	/*
+	 * Calls interceptor to destroy this, also responds with FIN-ACK packet
+	 */
+	private void closeConnection(int seqNum, int ackNum) throws IOException {
+
+		System.out.println(Thread.currentThread().getId() + ": shutting down, sending FIN - ACK");
+
+		segmentAndSend(seqNum, ackNum, (byte) 0x11, new byte[0]);
+
+		this.interceptor.shutdownProxy(this, this.localPort);
+
+	}
+
+	private void segmentAndSend(int ackNum, int seqNum, byte[] packet) throws IOException {
+		segmentAndSend(ackNum, seqNum, (byte) 0x18, packet);
+	}
+
+	private void segmentAndSend(int ackNum, int seqNum, byte flags, byte[] packet) throws IOException {
+
+		int offset;
+
+		for (offset = 0; offset + MSS < packet.length; offset += MSS) {
+
+			short identification = (short) Interceptor.random.nextInt();
+
+			byte[] segment = createSegment(ackNum + offset, seqNum, flags, Arrays.copyOfRange(packet, offset, offset + MSS));
+
+			cachedRequests.put(ackNum + offset, segment);
+
+			synchronized (out) {
+				out.write(createDatagram(segment, identification, false, false, 0));
+			}
+
+		}
+
+		short identification = (short) Interceptor.random.nextInt();
+
+		byte[] segment = createSegment(ackNum + offset, seqNum, flags, Arrays.copyOfRange(packet, offset, packet.length));
+
+		cachedRequests.put(ackNum + offset, segment);
+
+		synchronized (out) {
+			out.write(createDatagram(segment, identification, false, false, 0));
+		}
+
+		System.out.println(Thread.currentThread().getId() + ": sent: " + identification);
+	}
+
+	private byte[] createDatagram(byte[] segment, short identification, boolean DF, boolean MF, int fragOffset) {
+		ByteBuffer datagram = ByteBuffer.allocate(segment.length + 20);
+		datagram.put(createDatagramHeader(segment.length + 20, identification, DF, MF, fragOffset)).put(segment);
+
+
+		System.out.println(Thread.currentThread().getId() + ": created Datagram: " + byteArrToHexString(datagram.array()));
+		return datagram.array();
 	}
 
 	// Creates a datagram with no options set
@@ -208,10 +324,25 @@ public class ProxySocket implements Runnable {
 
 		// Combine the datagram header and segment
 		ByteBuffer datagram = ByteBuffer.allocate(datagramHeader.length + segment.length);
-		System.out.println(datagramHeader.length + segment.length);
 		datagram.put(datagramHeader).put(segment);
 
 		return datagram.array();
+	}
+
+	private byte[] createDatagramHeader(int length, short identification, boolean DF, boolean MF, int fragOffset) {
+		ByteBuffer ipHeader = ByteBuffer.wrap(Arrays.copyOf(this.ipHeaderTemplate, this.ipHeaderTemplate.length));
+
+		short fragment = (short) ((((DF ? 0b10 : 0) | (MF ? 0b1 : 0)) << 13) | (fragOffset & 0x1FFF));
+
+		ipHeader.putShort(2, (short) length)
+				.putShort(4, identification)
+				.putShort(6 , fragment);
+
+		// Calculate the checksum
+		int ipChecksum = calculateChecksum(ipHeader.array());
+		ipHeader.putShort(10, (short) ipChecksum);
+
+		return ipHeader.array();
 	}
 
 	/*
@@ -228,6 +359,10 @@ public class ProxySocket implements Runnable {
 		ipHeader.putShort(10, (short) ipChecksum);
 
 		return ipHeader.array();
+	}
+
+	private byte[] createSegment(int seqNum, int ackNum, byte flags, byte[] data) {
+		return createSegment(seqNum, ackNum, flags, new byte[0], data);
 	}
 
 	/*
@@ -288,7 +423,7 @@ public class ProxySocket implements Runnable {
 	}
 
 	// Returns a string of the bytes in the packet formatted in hex
-	private String byteArrToHexString(byte[] packet) {
+	static String byteArrToHexString(byte[] packet) {
 		StringBuilder sb = new StringBuilder();
 
 		for (byte b : packet) {
@@ -307,6 +442,7 @@ public class ProxySocket implements Runnable {
 		this.isRunning = false;
 
 		this.sharedBuffer.offer(new byte[] {}); // To unblock in sharedBuffer.take()
+		this.sharedBuffer.poll();
 
 		try {
 			this.sock.close();
